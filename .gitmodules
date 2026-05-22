@@ -1,0 +1,11 @@
+[submodule "vendor/hermes-agent"]
+	path = vendor/hermes-agent
+	url = https://github.com/NousResearch/hermes-agent.git
+	branch = main
+[submodule "vendor/honcho"]
+	path = vendor/honcho
+	url = https://github.com/plastic-labs/honcho.git
+	branch = main
+[submodule "vendor/gbrain"]
+	path = vendor/gbrain
+	url = https://github.com/garrytan/gbrain.git

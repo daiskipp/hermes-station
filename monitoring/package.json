@@ -1,0 +1,12 @@
+{
+  "name": "hermes-station-dashboard",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "dev": "bun --watch run src/server.ts"
+  },
+  "dependencies": {
+    "postgres": "^3.4.5"
+  }
+}

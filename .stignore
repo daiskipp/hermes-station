@@ -1,0 +1,6 @@
+// Syncthing ignore: prevent sync of volatile/large data
+.env
+node_modules
+__pycache__
+.venv
+*.log

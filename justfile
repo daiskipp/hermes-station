@@ -1,0 +1,109 @@
+# hermes-station task runner
+
+set dotenv-load
+
+# Start core services (Hermes + webui + Postgres)
+up:
+    git submodule update --init --recursive
+    docker compose up -d --build
+    @sleep 3
+    @just health
+    @echo ""
+    @echo "========================================="
+    @echo "  hermes-station is running (core)"
+    @echo "========================================="
+    @echo "  Chat UI:   http://localhost:${WEBUI_PORT:-8787}"
+    @echo "  Hermes:    http://localhost:${HERMES_DASHBOARD_PORT:-9119}"
+    @echo "  Model:     ${OLLAMA_MODEL:-qwen3.6:27b-coding-nvfp4}"
+    @echo "========================================="
+    @echo "  Run 'just all-up' to also start GBRAIN, Honcho, Dashboard"
+
+# Start all services (core + GBRAIN + Honcho + Dashboard)
+all-up:
+    git submodule update --init --recursive
+    docker compose --profile full up -d --build
+    @sleep 3
+    @just health
+    @echo ""
+    @echo "========================================="
+    @echo "  hermes-station is running (full)"
+    @echo "========================================="
+    @echo "  Chat UI:   http://localhost:${WEBUI_PORT:-8787}"
+    @echo "  Hermes:    http://localhost:${HERMES_DASHBOARD_PORT:-9119}"
+    @echo "  Monitor:   http://localhost:${DASHBOARD_PORT:-8080}"
+    @echo "  Model:     ${OLLAMA_MODEL:-qwen3.6:27b-coding-nvfp4}"
+    @echo "========================================="
+
+# Health check all running services
+health:
+    @echo "=== Postgres ==="
+    @docker compose exec -T postgres pg_isready -U ${POSTGRES_USER:-agentos} 2>/dev/null && echo "OK" || echo "FAIL"
+    @echo "=== Hermes ==="
+    @docker compose exec -T hermes bash -c "source /opt/hermes/.venv/bin/activate && hermes status" 2>/dev/null && echo "OK" || echo "FAIL"
+    @echo "=== hermes-webui ==="
+    @curl -sf http://localhost:${WEBUI_PORT:-8787} > /dev/null 2>&1 && echo "OK" || echo "FAIL"
+    @echo "=== GBRAIN ==="
+    @docker compose exec -T gbrain curl -sf http://localhost:${GBRAIN_PORT:-3131}/health > /dev/null 2>&1 && echo "OK" || echo "SKIP (not running)"
+    @echo "=== Honcho ==="
+    @docker compose exec -T honcho /app/.venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read(); print('OK')" 2>/dev/null || echo "SKIP (not running)"
+    @echo "=== Dashboard ==="
+    @curl -sf http://localhost:${DASHBOARD_PORT:-8080} > /dev/null 2>&1 && echo "OK" || echo "SKIP (not running)"
+
+# Stop all services
+down:
+    docker compose --profile full down
+
+# Full cleanup: containers, volumes, agent data
+[confirm("This will DELETE all agent data in $AGENT_DATA. Continue?")]
+clean:
+    docker compose --profile full down -v --rmi local --remove-orphans
+    rm -rf "${AGENT_DATA:-$HOME/agent-data}/postgres" "${AGENT_DATA:-$HOME/agent-data}/hermes" "${AGENT_DATA:-$HOME/agent-data}/gbrain" "${AGENT_DATA:-$HOME/agent-data}/honcho"
+    @echo "Cleaned. Run 'just up' to rebuild."
+
+# View logs (e.g. just logs postgres, just logs -f)
+logs *args:
+    docker compose logs {{ args }}
+
+# Connect to Postgres CLI
+psql:
+    docker compose exec postgres psql -U ${POSTGRES_USER:-agentos} -d ${POSTGRES_DB:-agentos}
+
+# Show service status
+status:
+    docker compose --profile full ps
+
+# Show pinned versions
+versions:
+    @echo "=== Submodule versions ==="
+    @cd vendor/hermes-agent && echo "hermes-agent: $(git describe --tags 2>/dev/null || git rev-parse --short HEAD)"
+    @cd vendor/honcho && echo "honcho:       $(git describe --tags 2>/dev/null || git rev-parse --short HEAD)"
+    @cd vendor/gbrain && echo "gbrain:       $(git describe --tags 2>/dev/null || git rev-parse --short HEAD)"
+    @echo "=== Docker images ==="
+    @echo "hermes-webui: $(docker inspect ghcr.io/nesquena/hermes-webui:latest --format '{{{{.RepoDigests}}}}' 2>/dev/null | head -1 || echo 'not pulled')"
+
+# Update all vendor submodules to latest tags and rebuild
+update:
+    @echo "Fetching latest tags..."
+    cd vendor/hermes-agent && git fetch --tags && git checkout $(git describe --tags $(git rev-list --tags --max-count=1))
+    cd vendor/honcho && git fetch --tags && git checkout $(git describe --tags $(git rev-list --tags --max-count=1))
+    cd vendor/gbrain && git fetch origin && git checkout origin/master
+    docker pull ghcr.io/nesquena/hermes-webui:latest
+    @echo "Rebuilding..."
+    docker compose --profile full up -d --build
+    @just versions
+
+# Update a specific service (e.g. just update-service hermes)
+update-service service:
+    #!/usr/bin/env bash
+    case "{{ service }}" in
+        hermes)  cd vendor/hermes-agent && git fetch --tags && git checkout $(git describe --tags $(git rev-list --tags --max-count=1)) ;;
+        honcho)  cd vendor/honcho && git fetch --tags && git checkout $(git describe --tags $(git rev-list --tags --max-count=1)) ;;
+        gbrain)  cd vendor/gbrain && git fetch origin && git checkout origin/master ;;
+        webui)   docker pull ghcr.io/nesquena/hermes-webui:latest ;;
+        *)       echo "Unknown service: {{ service }}. Use: hermes, honcho, gbrain, webui" && exit 1 ;;
+    esac
+    docker compose --profile full up -d --build {{ service }}
+
+# Rebuild a specific service without updating
+rebuild service:
+    docker compose --profile full up -d --build {{ service }}

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>hermes-station dashboard</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>hermes-station dashboard</h1>
+      <p class="subtitle">GBRAIN / Honcho / Hermes monitoring</p>
+    </div>
+    <div class="header-right">
+      <a href="http://localhost:8787" class="webui-link" target="_blank" rel="noopener">Open hermes-webui &rarr;</a>
+      <span class="last-updated" id="lastUpdated">Last updated: --</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Health Panel -->
+    <section class="panel">
+      <h2 class="panel-title">Service Health</h2>
+      <div class="health-grid" id="healthGrid">
+        <div class="health-card" data-service="gbrain">
+          <span class="status-dot unknown"></span>
+          <span class="service-name">GBRAIN</span>
+          <span class="latency" data-latency="gbrain">--</span>
+        </div>
+        <div class="health-card" data-service="honcho">
+          <span class="status-dot unknown"></span>
+          <span class="service-name">Honcho</span>
+          <span class="latency" data-latency="honcho">--</span>
+        </div>
+        <div class="health-card" data-service="hermes">
+          <span class="status-dot unknown"></span>
+          <span class="service-name">Hermes</span>
+          <span class="latency" data-latency="hermes">--</span>
+        </div>
+        <div class="health-card" data-service="hermes-webui">
+          <span class="status-dot unknown"></span>
+          <span class="service-name">hermes-webui</span>
+          <span class="latency" data-latency="hermes-webui">--</span>
+        </div>
+        <div class="health-card" data-service="postgres">
+          <span class="status-dot unknown"></span>
+          <span class="service-name">Postgres</span>
+          <span class="latency" data-latency="postgres">--</span>
+        </div>
+        <div class="health-card" data-service="ollama">
+          <span class="status-dot unknown"></span>
+          <span class="service-name">Ollama</span>
+          <span class="latency" data-latency="ollama">--</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Memory Growth Panel -->
+    <section class="panel">
+      <h2 class="panel-title">Memory Growth</h2>
+      <div class="metrics-grid">
+        <div class="metrics-sub-panel">
+          <h3>GBRAIN</h3>
+          <div class="metric-items">
+            <div class="metric-item">
+              <span class="metric-value" id="gbrain-page_count">N/A</span>
+              <span class="metric-label">Pages</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-value" id="gbrain-chunk_count">N/A</span>
+              <span class="metric-label">Chunks</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-value" id="gbrain-entity_count">N/A</span>
+              <span class="metric-label">Entities</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-value" id="gbrain-link_count">N/A</span>
+              <span class="metric-label">Links</span>
+            </div>
+          </div>
+        </div>
+        <div class="metrics-sub-panel">
+          <h3>Honcho</h3>
+          <div class="metric-items">
+            <div class="metric-item">
+              <span class="metric-value" id="honcho-peer_count">N/A</span>
+              <span class="metric-label">Peers</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-value" id="honcho-session_count">N/A</span>
+              <span class="metric-label">Sessions</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-value" id="honcho-representation_count">N/A</span>
+              <span class="metric-label">Representations</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Chart.js placeholder for future use -->
+      <canvas id="memoryChart" style="display:none;" width="600" height="200"></canvas>
+    </section>
+
+    <!-- Tokens Panel -->
+    <section class="panel">
+      <h2 class="panel-title">Token Usage</h2>
+      <div id="tokensPanel" class="tokens-content">
+        <p class="tokens-unavailable">Data unavailable</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

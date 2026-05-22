@@ -1,0 +1,30 @@
+# Environment
+.env
+!.env.example
+
+# Agent data (persisted outside repo)
+~/agent-data/
+
+# Claude Code (session/state are local)
+.claude/sessions/
+.claude/state/
+vendor/.claude/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Node/Bun (monitoring)
+node_modules/
+bun.lockb
+
+# Python (vendor builds)
+__pycache__/
+*.pyc
+.venv/
+
+# Docker
+*.log

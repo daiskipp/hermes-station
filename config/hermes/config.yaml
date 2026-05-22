@@ -1,0 +1,86 @@
+# Agent OS: Hermes Agent Configuration
+# This file is copied to ~/agent-data/hermes/config.yaml on first boot.
+# After that, edit the copy directly (this template is not re-applied).
+
+# =============================================================================
+# Model: Ollama (local, via host.docker.internal)
+# =============================================================================
+model:
+  # Overridden by HERMES_MODEL env var in docker-compose.yml
+  # Change via OLLAMA_MODEL in .env
+  default: "qwen3.6:27b-coding-nvfp4"
+  provider: "custom"
+  base_url: "http://host.docker.internal:11434/v1"
+
+# =============================================================================
+# Terminal: local (container-internal, Mac non-contamination)
+# =============================================================================
+terminal:
+  backend: "local"
+  cwd: "."
+  timeout: 180
+  container_cpu: 1
+  container_memory: 5120
+  container_disk: 51200
+  container_persistent: true
+
+# =============================================================================
+# Memory (Tier1: MEMORY.md + USER.md)
+# =============================================================================
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  nudge_interval: 10
+  flush_min_turns: 6
+
+# =============================================================================
+# Agent Behavior
+# =============================================================================
+agent:
+  max_turns: 60
+  verbose: false
+  reasoning_effort: "none"  # "none" for speed, "medium" for quality
+
+# =============================================================================
+# Compression
+# =============================================================================
+compression:
+  enabled: true
+  threshold: 0.50
+  target_ratio: 0.20
+  protect_last_n: 20
+  protect_first_n: 3
+
+# =============================================================================
+# Delegation (subagents)
+# =============================================================================
+delegation:
+  max_iterations: 50
+
+# =============================================================================
+# MCP Servers (M3: GBRAIN will be added here)
+# =============================================================================
+# MCP Servers
+# GBRAIN token is injected at runtime by reading /opt/gbrain-data/mcp-token.txt
+# mcp_servers:
+#   gbrain:
+#     url: "http://gbrain:3131/mcp"
+#     headers:
+#       Authorization: "Bearer <token>"
+#     timeout: 120
+
+# =============================================================================
+# Honcho (M4: will be configured here)
+# =============================================================================
+# honcho: {}
+
+# =============================================================================
+# Display
+# =============================================================================
+display:
+  compact: false
+  tool_progress: all
+  streaming: true
+  skin: default
