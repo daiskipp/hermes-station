@@ -20,7 +20,7 @@ fi
 
 # Start GBRAIN in background, then register OAuth client and write token
 echo "Starting GBRAIN HTTP MCP server on port ${GBRAIN_PORT}..."
-gbrain serve --http --port "${GBRAIN_PORT}" --bind 0.0.0.0 --enable-dcr &
+gbrain serve --http --port "${GBRAIN_PORT}" --bind 0.0.0.0 --enable-dcr --token-ttl 31536000 &
 GBRAIN_PID=$!
 
 # Wait for server to be ready
