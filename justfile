@@ -166,6 +166,17 @@ restore archive:
     set -euo pipefail
     : "${AGENT_DATA:?Set AGENT_DATA in .env}"
     if [ ! -f "{{ archive }}" ]; then echo "Not found: {{ archive }}"; exit 1; fi
+
+    # Validate the archive BEFORE doing anything destructive. If it's
+    # truncated / not a gzip tarball / otherwise unreadable, fail here
+    # while the current $AGENT_DATA is still intact.
+    echo "Validating archive..."
+    if ! tar -tzf "{{ archive }}" > /dev/null 2>&1; then
+        echo "ERROR: archive is unreadable or not a valid gzip tarball: {{ archive }}"
+        echo "       Aborting before any data is touched."
+        exit 1
+    fi
+
     echo "WARNING: this will WIPE every directory under ${AGENT_DATA} except backups/,"
     echo "         then extract the archive into the fresh tree."
     echo "         All current Hermes / GBRAIN / Honcho / Postgres state will be lost."
