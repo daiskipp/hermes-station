@@ -183,7 +183,26 @@ restore archive:
     read -r -p "Continue? [y/N] " ans
     [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
 
+    # If the archive itself lives under $AGENT_DATA (but outside backups/),
+    # the wipe below would delete it before we get to tar -xzf. Stage to a
+    # temp dir in that case. Paths are canonicalized via `pwd -P` so symlinks
+    # pointing into $AGENT_DATA are detected too.
+    archive_abs="$(cd "$(dirname "{{ archive }}")" && pwd -P)/$(basename "{{ archive }}")"
+    data_abs="$(cd "${AGENT_DATA}" && pwd -P)"
+    safe_archive="$archive_abs"
+    case "$archive_abs" in
+        "${data_abs}/backups/"*) : ;;  # safe, under preserved dir
+        "${data_abs}/"*)
+            tmpdir="$(mktemp -d)"
+            trap 'rm -rf "$tmpdir"' EXIT
+            safe_archive="${tmpdir}/$(basename "$archive_abs")"
+            echo "Archive is inside \$AGENT_DATA — staging to ${safe_archive} to survive wipe..."
+            cp "$archive_abs" "$safe_archive"
+            ;;
+        *) : ;;  # outside $AGENT_DATA, safe
+    esac
+
     docker compose --profile full down 2>/dev/null || true
     find "${AGENT_DATA}" -mindepth 1 -maxdepth 1 ! -name 'backups' -exec rm -rf {} +
-    tar -C "${AGENT_DATA}" -xzf "{{ archive }}"
+    tar -C "${AGENT_DATA}" -xzf "$safe_archive"
     echo "Restored from {{ archive }}. Run 'just up' or 'just all-up' to start."
