@@ -169,13 +169,19 @@ restore archive:
     set -euo pipefail
     : "${AGENT_DATA:?Set AGENT_DATA in .env}"
     if [ ! -f "{{ archive }}" ]; then echo "Not found: {{ archive }}"; exit 1; fi
-    echo "WARNING: this will overwrite files under ${AGENT_DATA} (backups/ preserved)."
-    echo "         The live Postgres data dir (${AGENT_DATA}/postgres) will be wiped."
+    echo "WARNING: this will WIPE every directory under ${AGENT_DATA} except backups/,"
+    echo "         then extract the archive into the fresh tree."
+    echo "         All current Hermes / GBRAIN / Honcho / Postgres state will be lost."
     read -r -p "Continue? [y/N] " ans
     [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
 
     docker compose --profile full down 2>/dev/null || true
-    rm -rf "${AGENT_DATA}/postgres" "${AGENT_DATA}/_postgres-dump"
+
+    # Wipe every top-level entry in AGENT_DATA except backups/ so we get a
+    # clean tree. A sparse overlay (default tar -x behavior) would leave
+    # newer post-snapshot files (Hermes state, PGLite WAL, etc.) behind and
+    # corrupt the restored state.
+    find "${AGENT_DATA}" -mindepth 1 -maxdepth 1 ! -name 'backups' -exec rm -rf {} +
     tar -C "${AGENT_DATA}" -xzf "{{ archive }}"
 
     if [ -f "${AGENT_DATA}/_postgres-dump/dumpall.sql" ]; then
