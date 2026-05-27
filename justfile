@@ -2,9 +2,10 @@
 
 set dotenv-load
 
-# Start core services (Hermes + webui + Postgres)
+# Start core services (Hermes + webui)
 up:
     git submodule update --init --recursive
+    @just _init-data
     docker compose up -d --build
     @sleep 3
     @just health
@@ -16,11 +17,12 @@ up:
     @echo "  Hermes:    http://localhost:${HERMES_DASHBOARD_PORT:-9119}"
     @echo "  Model:     ${OLLAMA_MODEL:-qwen3.6:27b-coding-nvfp4}"
     @echo "========================================="
-    @echo "  Run 'just all-up' to also start GBRAIN, Honcho, Dashboard"
+    @echo "  Run 'just all-up' to also start Postgres, GBRAIN, Honcho, Dashboard"
 
-# Start all services (core + GBRAIN + Honcho + Dashboard)
+# Start all services (core + Postgres + GBRAIN + Honcho + Dashboard)
 all-up:
     git submodule update --init --recursive
+    @just _init-data
     docker compose --profile full up -d --build
     @sleep 3
     @just health
@@ -107,3 +109,41 @@ update-service service:
 # Rebuild a specific service without updating
 rebuild service:
     docker compose --profile full up -d --build {{ service }}
+
+# Create AGENT_DATA layout (idempotent; called by up / all-up)
+_init-data:
+    @mkdir -p \
+        "${AGENT_DATA:?Set AGENT_DATA in .env}/hermes" \
+        "${AGENT_DATA}/gbrain" \
+        "${AGENT_DATA}/honcho" \
+        "${AGENT_DATA}/postgres" \
+        "${AGENT_DATA}/inbox/chatgpt" \
+        "${AGENT_DATA}/inbox/claude" \
+        "${AGENT_DATA}/inbox/hermes" \
+        "${AGENT_DATA}/inbox/manual" \
+        "${AGENT_DATA}/backups"
+
+# Snapshot AGENT_DATA to a timestamped tarball under $AGENT_DATA/backups
+backup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${AGENT_DATA:?Set AGENT_DATA in .env}"
+    ts="$(date +%Y%m%d-%H%M%S)"
+    out="${AGENT_DATA}/backups/hermes-station-${ts}.tar.gz"
+    mkdir -p "${AGENT_DATA}/backups"
+    echo "Creating backup: ${out}"
+    tar --exclude='backups' -C "${AGENT_DATA}" -czf "${out}" .
+    echo "Done: $(du -h "${out}" | cut -f1)  ${out}"
+
+# Restore AGENT_DATA from a backup tarball (just restore path/to/backup.tar.gz)
+restore archive:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${AGENT_DATA:?Set AGENT_DATA in .env}"
+    if [ ! -f "{{ archive }}" ]; then echo "Not found: {{ archive }}"; exit 1; fi
+    echo "WARNING: this will overwrite files under ${AGENT_DATA} (backups/ preserved)."
+    read -r -p "Continue? [y/N] " ans
+    [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
+    docker compose --profile full down 2>/dev/null || true
+    tar -C "${AGENT_DATA}" -xzf "{{ archive }}"
+    echo "Restored from {{ archive }}. Run 'just up' or 'just all-up' to start."
