@@ -123,7 +123,8 @@ _init-data:
         "${AGENT_DATA}/inbox/manual" \
         "${AGENT_DATA}/backups"
 
-# Snapshot AGENT_DATA to a timestamped tarball under $AGENT_DATA/backups
+# Snapshot AGENT_DATA to a timestamped tarball under $AGENT_DATA/backups.
+# Uses pg_dumpall for Postgres (logical backup) — never tars live PGDATA.
 backup:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -131,19 +132,64 @@ backup:
     ts="$(date +%Y%m%d-%H%M%S)"
     out="${AGENT_DATA}/backups/hermes-station-${ts}.tar.gz"
     mkdir -p "${AGENT_DATA}/backups"
-    echo "Creating backup: ${out}"
-    tar --exclude='backups' -C "${AGENT_DATA}" -czf "${out}" .
-    echo "Done: $(du -h "${out}" | cut -f1)  ${out}"
 
-# Restore AGENT_DATA from a backup tarball (just restore path/to/backup.tar.gz)
+    stage="$(mktemp -d)"
+    trap 'rm -rf "$stage"' EXIT
+
+    pg_running=0
+    if docker compose ps --status=running --services 2>/dev/null | grep -qx postgres; then
+        pg_running=1
+        echo "Dumping Postgres via pg_dumpall..."
+        mkdir -p "${stage}/_postgres-dump"
+        docker compose exec -T postgres pg_dumpall -U "${POSTGRES_USER:-agentos}" \
+            > "${stage}/_postgres-dump/dumpall.sql"
+    else
+        echo "Postgres is not running — skipping SQL dump."
+        echo "  (live PGDATA is excluded from the archive either way; restart Postgres and re-run for DB backup)"
+    fi
+
+    echo "Creating backup: ${out}"
+    # Always exclude live PGDATA (./postgres) and our own backups dir.
+    # PGDATA bytes are version-locked and unsafe to copy from a running cluster.
+    if [ "$pg_running" = "1" ]; then
+        tar -czf "${out}" \
+            -C "${AGENT_DATA}" --exclude='./backups' --exclude='./postgres' . \
+            -C "${stage}" .
+    else
+        tar -czf "${out}" \
+            -C "${AGENT_DATA}" --exclude='./backups' --exclude='./postgres' .
+    fi
+    echo "Done: $(du -h "${out}" | cut -f1)  ${out}"
+    [ "$pg_running" = "1" ] && echo "  contains: _postgres-dump/dumpall.sql"
+
+# Restore AGENT_DATA from a backup tarball (just restore path/to/backup.tar.gz).
+# Replays _postgres-dump/dumpall.sql via a freshly-initialized Postgres if present.
 restore archive:
     #!/usr/bin/env bash
     set -euo pipefail
     : "${AGENT_DATA:?Set AGENT_DATA in .env}"
     if [ ! -f "{{ archive }}" ]; then echo "Not found: {{ archive }}"; exit 1; fi
     echo "WARNING: this will overwrite files under ${AGENT_DATA} (backups/ preserved)."
+    echo "         The live Postgres data dir (${AGENT_DATA}/postgres) will be wiped."
     read -r -p "Continue? [y/N] " ans
     [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
+
     docker compose --profile full down 2>/dev/null || true
+    rm -rf "${AGENT_DATA}/postgres" "${AGENT_DATA}/_postgres-dump"
     tar -C "${AGENT_DATA}" -xzf "{{ archive }}"
+
+    if [ -f "${AGENT_DATA}/_postgres-dump/dumpall.sql" ]; then
+        echo "Found SQL dump — starting Postgres to replay..."
+        docker compose --profile full up -d postgres
+        for i in $(seq 1 30); do
+            docker compose exec -T postgres pg_isready -U "${POSTGRES_USER:-agentos}" >/dev/null 2>&1 && break
+            sleep 1
+        done
+        docker compose exec -T postgres psql -U "${POSTGRES_USER:-agentos}" -d postgres \
+            < "${AGENT_DATA}/_postgres-dump/dumpall.sql"
+        rm -rf "${AGENT_DATA}/_postgres-dump"
+        echo "Postgres restored from dump."
+    else
+        echo "No SQL dump in archive — Postgres will start empty on next 'just all-up'."
+    fi
     echo "Restored from {{ archive }}. Run 'just up' or 'just all-up' to start."
