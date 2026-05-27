@@ -183,6 +183,11 @@ restore archive:
     read -r -p "Continue? [y/N] " ans
     [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
 
+    # Make sure $AGENT_DATA exists so the canonicalization below and the
+    # later tar -C / find can operate on a fresh checkout / new host where
+    # the directory may not have been created yet.
+    mkdir -p "${AGENT_DATA}"
+
     # If the archive itself lives under $AGENT_DATA (but outside backups/),
     # the wipe below would delete it before we get to tar -xzf. Stage to a
     # temp dir in that case. Paths are canonicalized via `pwd -P` so symlinks
