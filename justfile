@@ -2,9 +2,10 @@
 
 set dotenv-load
 
-# Start core services (Hermes + webui + Postgres)
+# Start core services (Hermes + webui)
 up:
     git submodule update --init --recursive
+    @just _init-data
     docker compose up -d --build
     @sleep 3
     @just health
@@ -16,11 +17,12 @@ up:
     @echo "  Hermes:    http://localhost:${HERMES_DASHBOARD_PORT:-9119}"
     @echo "  Model:     ${OLLAMA_MODEL:-qwen3.6:27b-coding-nvfp4}"
     @echo "========================================="
-    @echo "  Run 'just all-up' to also start GBRAIN, Honcho, Dashboard"
+    @echo "  Run 'just all-up' to also start Postgres, GBRAIN, Honcho, Dashboard"
 
-# Start all services (core + GBRAIN + Honcho + Dashboard)
+# Start all services (core + Postgres + GBRAIN + Honcho + Dashboard)
 all-up:
     git submodule update --init --recursive
+    @just _init-data
     docker compose --profile full up -d --build
     @sleep 3
     @just health
@@ -107,3 +109,105 @@ update-service service:
 # Rebuild a specific service without updating
 rebuild service:
     docker compose --profile full up -d --build {{ service }}
+
+# Create AGENT_DATA layout (idempotent; called by up / all-up)
+_init-data:
+    @mkdir -p \
+        "${AGENT_DATA:?Set AGENT_DATA in .env}/hermes" \
+        "${AGENT_DATA}/gbrain" \
+        "${AGENT_DATA}/honcho" \
+        "${AGENT_DATA}/postgres" \
+        "${AGENT_DATA}/inbox/chatgpt" \
+        "${AGENT_DATA}/inbox/claude" \
+        "${AGENT_DATA}/inbox/hermes" \
+        "${AGENT_DATA}/inbox/manual" \
+        "${AGENT_DATA}/backups"
+
+# Cold-snapshot AGENT_DATA to a timestamped tarball under $AGENT_DATA/backups.
+# Quiesces every running compose service first so file-backed stores
+# (Postgres PGDATA, Hermes SQLite/FTS, GBRAIN PGLite) are consistent on disk,
+# then restarts whatever was running before.
+backup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${AGENT_DATA:?Set AGENT_DATA in .env}"
+    ts="$(date +%Y%m%d-%H%M%S)"
+    out="${AGENT_DATA}/backups/hermes-station-${ts}.tar.gz"
+    mkdir -p "${AGENT_DATA}/backups"
+
+    # Snapshot the running set before we stop anything.
+    running="$(docker compose --profile full ps --status=running --services 2>/dev/null || true)"
+
+    restart_after() {
+        if [ -n "${running:-}" ]; then
+            echo "Restarting previously running services..."
+            # `start` (not `up`) preserves the existing container so we don't recreate.
+            echo "$running" | xargs docker compose --profile full start
+        fi
+    }
+    trap restart_after EXIT
+
+    if [ -n "$running" ]; then
+        echo "Quiescing services for consistent snapshot: $(echo "$running" | tr '\n' ' ')"
+        docker compose --profile full stop
+    else
+        echo "No services running — taking cold snapshot directly."
+    fi
+
+    echo "Creating backup: ${out}"
+    tar --exclude='./backups' -C "${AGENT_DATA}" -czf "${out}" .
+    echo "Done: $(du -h "${out}" | cut -f1)  ${out}"
+
+# Restore AGENT_DATA from a backup tarball (just restore path/to/backup.tar.gz).
+# Wipes the current data tree (except backups/) before extracting so no
+# post-snapshot files survive into the restored state.
+restore archive:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${AGENT_DATA:?Set AGENT_DATA in .env}"
+    if [ ! -f "{{ archive }}" ]; then echo "Not found: {{ archive }}"; exit 1; fi
+
+    # Validate the archive BEFORE doing anything destructive. If it's
+    # truncated / not a gzip tarball / otherwise unreadable, fail here
+    # while the current $AGENT_DATA is still intact.
+    echo "Validating archive..."
+    if ! tar -tzf "{{ archive }}" > /dev/null 2>&1; then
+        echo "ERROR: archive is unreadable or not a valid gzip tarball: {{ archive }}"
+        echo "       Aborting before any data is touched."
+        exit 1
+    fi
+
+    echo "WARNING: this will WIPE every directory under ${AGENT_DATA} except backups/,"
+    echo "         then extract the archive into the fresh tree."
+    echo "         All current Hermes / GBRAIN / Honcho / Postgres state will be lost."
+    read -r -p "Continue? [y/N] " ans
+    [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
+
+    # Make sure $AGENT_DATA exists so the canonicalization below and the
+    # later tar -C / find can operate on a fresh checkout / new host where
+    # the directory may not have been created yet.
+    mkdir -p "${AGENT_DATA}"
+
+    # If the archive itself lives under $AGENT_DATA (but outside backups/),
+    # the wipe below would delete it before we get to tar -xzf. Stage to a
+    # temp dir in that case. Paths are canonicalized via `pwd -P` so symlinks
+    # pointing into $AGENT_DATA are detected too.
+    archive_abs="$(cd "$(dirname "{{ archive }}")" && pwd -P)/$(basename "{{ archive }}")"
+    data_abs="$(cd "${AGENT_DATA}" && pwd -P)"
+    safe_archive="$archive_abs"
+    case "$archive_abs" in
+        "${data_abs}/backups/"*) : ;;  # safe, under preserved dir
+        "${data_abs}/"*)
+            tmpdir="$(mktemp -d)"
+            trap 'rm -rf "$tmpdir"' EXIT
+            safe_archive="${tmpdir}/$(basename "$archive_abs")"
+            echo "Archive is inside \$AGENT_DATA — staging to ${safe_archive} to survive wipe..."
+            cp "$archive_abs" "$safe_archive"
+            ;;
+        *) : ;;  # outside $AGENT_DATA, safe
+    esac
+
+    docker compose --profile full down 2>/dev/null || true
+    find "${AGENT_DATA}" -mindepth 1 -maxdepth 1 ! -name 'backups' -exec rm -rf {} +
+    tar -C "${AGENT_DATA}" -xzf "$safe_archive"
+    echo "Restored from {{ archive }}. Run 'just up' or 'just all-up' to start."
