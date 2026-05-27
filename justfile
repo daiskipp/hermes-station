@@ -123,8 +123,10 @@ _init-data:
         "${AGENT_DATA}/inbox/manual" \
         "${AGENT_DATA}/backups"
 
-# Snapshot AGENT_DATA to a timestamped tarball under $AGENT_DATA/backups.
-# Uses pg_dumpall for Postgres (logical backup) — never tars live PGDATA.
+# Cold-snapshot AGENT_DATA to a timestamped tarball under $AGENT_DATA/backups.
+# Quiesces every running compose service first so file-backed stores
+# (Postgres PGDATA, Hermes SQLite/FTS, GBRAIN PGLite) are consistent on disk,
+# then restarts whatever was running before.
 backup:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -133,37 +135,32 @@ backup:
     out="${AGENT_DATA}/backups/hermes-station-${ts}.tar.gz"
     mkdir -p "${AGENT_DATA}/backups"
 
-    stage="$(mktemp -d)"
-    trap 'rm -rf "$stage"' EXIT
+    # Snapshot the running set before we stop anything.
+    running="$(docker compose --profile full ps --status=running --services 2>/dev/null || true)"
 
-    pg_running=0
-    if docker compose ps --status=running --services 2>/dev/null | grep -qx postgres; then
-        pg_running=1
-        echo "Dumping Postgres via pg_dumpall..."
-        mkdir -p "${stage}/_postgres-dump"
-        docker compose exec -T postgres pg_dumpall -U "${POSTGRES_USER:-agentos}" \
-            > "${stage}/_postgres-dump/dumpall.sql"
+    restart_after() {
+        if [ -n "${running:-}" ]; then
+            echo "Restarting previously running services..."
+            # `start` (not `up`) preserves the existing container so we don't recreate.
+            echo "$running" | xargs docker compose --profile full start
+        fi
+    }
+    trap restart_after EXIT
+
+    if [ -n "$running" ]; then
+        echo "Quiescing services for consistent snapshot: $(echo "$running" | tr '\n' ' ')"
+        docker compose --profile full stop
     else
-        echo "Postgres is not running — skipping SQL dump."
-        echo "  (live PGDATA is excluded from the archive either way; restart Postgres and re-run for DB backup)"
+        echo "No services running — taking cold snapshot directly."
     fi
 
     echo "Creating backup: ${out}"
-    # Always exclude live PGDATA (./postgres) and our own backups dir.
-    # PGDATA bytes are version-locked and unsafe to copy from a running cluster.
-    if [ "$pg_running" = "1" ]; then
-        tar -czf "${out}" \
-            -C "${AGENT_DATA}" --exclude='./backups' --exclude='./postgres' . \
-            -C "${stage}" .
-    else
-        tar -czf "${out}" \
-            -C "${AGENT_DATA}" --exclude='./backups' --exclude='./postgres' .
-    fi
+    tar --exclude='./backups' -C "${AGENT_DATA}" -czf "${out}" .
     echo "Done: $(du -h "${out}" | cut -f1)  ${out}"
-    [ "$pg_running" = "1" ] && echo "  contains: _postgres-dump/dumpall.sql"
 
 # Restore AGENT_DATA from a backup tarball (just restore path/to/backup.tar.gz).
-# Replays _postgres-dump/dumpall.sql via a freshly-initialized Postgres if present.
+# Wipes the current data tree (except backups/) before extracting so no
+# post-snapshot files survive into the restored state.
 restore archive:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -176,26 +173,6 @@ restore archive:
     [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
 
     docker compose --profile full down 2>/dev/null || true
-
-    # Wipe every top-level entry in AGENT_DATA except backups/ so we get a
-    # clean tree. A sparse overlay (default tar -x behavior) would leave
-    # newer post-snapshot files (Hermes state, PGLite WAL, etc.) behind and
-    # corrupt the restored state.
     find "${AGENT_DATA}" -mindepth 1 -maxdepth 1 ! -name 'backups' -exec rm -rf {} +
     tar -C "${AGENT_DATA}" -xzf "{{ archive }}"
-
-    if [ -f "${AGENT_DATA}/_postgres-dump/dumpall.sql" ]; then
-        echo "Found SQL dump — starting Postgres to replay..."
-        docker compose --profile full up -d postgres
-        for i in $(seq 1 30); do
-            docker compose exec -T postgres pg_isready -U "${POSTGRES_USER:-agentos}" >/dev/null 2>&1 && break
-            sleep 1
-        done
-        docker compose exec -T postgres psql -U "${POSTGRES_USER:-agentos}" -d postgres \
-            < "${AGENT_DATA}/_postgres-dump/dumpall.sql"
-        rm -rf "${AGENT_DATA}/_postgres-dump"
-        echo "Postgres restored from dump."
-    else
-        echo "No SQL dump in archive — Postgres will start empty on next 'just all-up'."
-    fi
     echo "Restored from {{ archive }}. Run 'just up' or 'just all-up' to start."
